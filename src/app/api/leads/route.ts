@@ -118,6 +118,10 @@ export async function POST(request: Request) {
         error instanceof Error
           ? error.name
           : "Unknown",
+	  reason:
+        error instanceof N8nIntegrationError
+        ? error.message
+        : "Unexpected application error"
     });
 
     return NextResponse.json(
