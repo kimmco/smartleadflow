@@ -106,12 +106,50 @@ export async function sendLeadToN8n(
 
   const data = result as Record<string, unknown>;
   
+  // TEMPORARY DEBUGGING — remove after resolving the issue
+  const sanitize = (value: unknown): unknown => {
+  if (Array.isArray(value)) {
+    return value.map(sanitize);
+  }
+
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, val]) => {
+        if (
+          /authorization|secret|token|cookie|password|api[-_]?key|email|phone|name|address|url|lead|assessment|body|headers|query|params/i.test(key)
+        ) {
+          return [key, "[REDACTED]"];
+        }
+
+        return [key, sanitize(val)];
+      })
+    );
+  }
+
+  return value;
+};
+
+console.info("DEBUG n8n raw result:", sanitize(result));
+console.info("DEBUG n8n parsed data:", sanitize(data));
+
+console.info("DEBUG n8n response inspection:", {
+isArray: Array.isArray(result),
+topLevelKeys: Object.keys(data),
+success: data.success,
+status: data.status,
+bodyType: typeof data.body,
+bodyIsArray: Array.isArray(data.body),
+executionMode: data.executionMode,
+});
+  
+  
   console.info("n8n webhook response structure", {
   keys: Object.keys(data),
   successType: typeof data.success,
   statusType: typeof data.status,
   hasBody: typeof data.body === "object" && data.body !== null,
 });
+
 
   if (
     typeof data.success !== "boolean" ||
