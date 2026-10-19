@@ -105,6 +105,13 @@ export async function sendLeadToN8n(
   }
 
   const data = result as Record<string, unknown>;
+  
+  console.info("n8n webhook response structure", {
+  keys: Object.keys(data),
+  successType: typeof data.success,
+  statusType: typeof data.status,
+  hasBody: typeof data.body === "object" && data.body !== null,
+});
 
   if (
     typeof data.success !== "boolean" ||
