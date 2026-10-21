@@ -26,20 +26,20 @@ export async function POST(request: Request) {
       );
     }
 
-    const result = leadSchema.safeParse(body);
+    const validation = leadSchema.safeParse(body);
 
-    if (!result.success) {
+    if (!validation.success) {
       return NextResponse.json(
         {
           success: false,
           error: "Invalid lead data",
-          details: result.error.flatten(),
+          details: validation.error.flatten(),
         },
         { status: 400 }
       );
     }
 
-    const lead = result.data;
+    const lead = validation.data;
     const assessment = calculateSolarAssessment(lead);
 
     requestId = crypto.randomUUID();
@@ -52,16 +52,16 @@ export async function POST(request: Request) {
 
     const status = workflowResult.status.toUpperCase();
 
-    if (
-      workflowResult.requestId &&
-      workflowResult.requestId !== requestId
-    ) {
+    // Defense in depth: ensure the response belongs
+    // to this exact lead submission.
+    if (workflowResult.requestId !== requestId) {
       throw new N8nIntegrationError(
         502,
         "n8n response requestId mismatch"
       );
     }
 
+    // 1. Successful CRM processing
     if (
       status === "COMPLETED" &&
       workflowResult.success === true
@@ -71,15 +71,27 @@ export async function POST(request: Request) {
         status,
       });
 
-      return NextResponse.json({
-        success: true,
-        requestId,
-        status,
-        assessment,
-      });
+      return NextResponse.json(
+        {
+          success: true,
+          requestId,
+          status: "COMPLETED",
+          assessment,
+        },
+        { status: 200 }
+      );
     }
 
-    if (status === "PROCESSING") {
+    // 2. Lead is still being processed
+    if (
+      status === "PROCESSING" &&
+      workflowResult.success === false
+    ) {
+      console.info("Lead processing", {
+        requestId,
+        status,
+      });
+
       return NextResponse.json(
         {
           success: false,
@@ -91,9 +103,48 @@ export async function POST(request: Request) {
       );
     }
 
+    // 3. Permanent provider validation failure
+    const isValidationFailure =
+      status === "DEAD" &&
+      workflowResult.success === false &&
+      workflowResult.retryable === false &&
+      (
+        workflowResult.errorCode === "INVALID_EMAIL" ||
+        workflowResult.errorCode === "PAYLOAD_INVALID"
+      );
+
+    if (isValidationFailure) {
+      const errorCode = workflowResult.errorCode;
+
+      console.warn("Lead validation rejected", {
+        requestId,
+        status,
+        errorCode,
+      });
+
+      const message =
+        errorCode === "INVALID_EMAIL"
+          ? "The email address could not be accepted. Please use another valid email address."
+          : "The submitted lead information could not be accepted. Please review your details.";
+
+      return NextResponse.json(
+        {
+          success: false,
+          requestId,
+          status: "DEAD",
+          errorCode,
+          retryable: false,
+          error: message,
+        },
+        { status: 422 }
+      );
+    }
+
+    // 4. Other unsuccessful workflow outcomes
     console.error("Lead processing incomplete", {
       requestId,
       status,
+      errorCode: workflowResult.errorCode ?? null,
     });
 
     return NextResponse.json(
@@ -118,10 +169,10 @@ export async function POST(request: Request) {
         error instanceof Error
           ? error.name
           : "Unknown",
-	  reason:
+      reason:
         error instanceof N8nIntegrationError
-        ? error.message
-        : "Unexpected application error"
+          ? error.message
+          : "Unexpected application error",
     });
 
     return NextResponse.json(
